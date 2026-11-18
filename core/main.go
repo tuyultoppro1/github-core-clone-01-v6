@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -85,16 +84,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	if s, ok := v.(string); ok {
 		b = []byte(s)
 	} else {
-		var buf bytes.Buffer
-		enc := json.NewEncoder(&buf)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(v); err != nil {
+		var err error
+		b, err = json.Marshal(v)
+		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(500)
 			w.Write([]byte(`{"message":"internal error"}`))
 			return
 		}
-		b = bytes.TrimRight(buf.Bytes(), "\n")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-GitHub-Request-Id", fmt.Sprintf("%016x", reqSeq.Add(1)))

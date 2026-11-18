@@ -243,8 +243,7 @@ func handleUploadPackV2(w http.ResponseWriter, r *http.Request, repo *Repo, body
 		w.WriteHeader(200)
 		w.Write(buf.Bytes())
 	case "fetch":
-		send, newShallow, unshallow := selectFetch(repo, wants, haves, depth, shallowList)
-		pack := writePack(repo, send)
+		pack, newShallow, unshallow := fetchPack(repo, wants, haves, depth, shallowList)
 		var buf bytes.Buffer
 		buf.Write(pktLine("acknowledgments\n"))
 		if len(haves) == 0 {
@@ -314,8 +313,7 @@ func handleUploadPackV0Real(w http.ResponseWriter, r *http.Request, repo *Repo, 
 	}
 	store.mu.RLock()
 	defer store.mu.RUnlock()
-	send, newShallow, unshallow := selectFetch(repo, wants, haves, depth, shallowList)
-	pack := writePack(repo, send)
+	pack, newShallow, unshallow := fetchPack(repo, wants, haves, depth, shallowList)
 	var buf bytes.Buffer
 	if len(haves) == 0 {
 		buf.Write(pktLine("NAK\n"))
@@ -426,6 +424,7 @@ func applyPush(repo *Repo, c pushCmd) (bool, string) {
 			return false, "non-fast-forward"
 		}
 		delete(repo.Refs, c.ref)
+		repo.bumpGen()
 		return true, ""
 	}
 	// create or update: new object must exist and resolve to a commit
@@ -446,6 +445,7 @@ func applyPush(repo *Repo, c pushCmd) (bool, string) {
 			return false, "non-fast-forward"
 		}
 		repo.Refs[c.ref] = c.newOID
+		repo.bumpGen()
 		return true, ""
 	}
 	// update: old must match current
@@ -456,5 +456,6 @@ func applyPush(repo *Repo, c pushCmd) (bool, string) {
 		return false, "non-fast-forward"
 	}
 	repo.Refs[c.ref] = c.newOID
+	repo.bumpGen()
 	return true, ""
 }

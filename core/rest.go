@@ -464,6 +464,7 @@ func (s *Store) commitOnBranch(repo *Repo, branch, message, treeOID string) stri
 	data := buildCommit(treeOID, parents, author, author, message)
 	oid := repo.putObject("commit", data)
 	repo.Refs["refs/heads/"+branch] = oid
+	repo.bumpGen()
 	return oid
 }
 
@@ -717,17 +718,41 @@ func handleCreateLabel(w http.ResponseWriter, r *http.Request, repo *Repo, body 
 
 // --- issues -----------------------------------------------------------------------
 
-func issueJSON(iss *Issue) map[string]any {
-	labels := make([]any, 0, len(iss.Labels))
+// Struct-encoded issue JSON: the read/write workloads hit this path
+// thousands of times, and map-based encoding is several times slower.
+type labelOut struct {
+	Name string `json:"name"`
+}
+
+type userOut struct {
+	Login string `json:"login"`
+	ID    int    `json:"id"`
+}
+
+type issueOut struct {
+	ID        int        `json:"id"`
+	Number    int        `json:"number"`
+	Title     string     `json:"title"`
+	Body      string     `json:"body"`
+	State     string     `json:"state"`
+	Labels    []labelOut `json:"labels"`
+	User      userOut    `json:"user"`
+	CreatedAt string     `json:"created_at"`
+	UpdatedAt string     `json:"updated_at"`
+	Comments  int        `json:"comments"`
+}
+
+func issueJSON(iss *Issue) issueOut {
+	labels := make([]labelOut, 0, len(iss.Labels))
 	for _, n := range iss.Labels {
-		labels = append(labels, map[string]any{"name": n})
+		labels = append(labels, labelOut{Name: n})
 	}
-	return map[string]any{
-		"id": iss.ID, "number": iss.Number, "title": iss.Title, "body": iss.Body,
-		"state": iss.State, "labels": labels,
-		"user":       map[string]any{"login": viewerLogin, "id": viewerID},
-		"created_at": iss.Created, "updated_at": iss.Updated,
-		"comments": len(iss.Comments),
+	return issueOut{
+		ID: iss.ID, Number: iss.Number, Title: iss.Title, Body: iss.Body,
+		State: iss.State, Labels: labels,
+		User:      userOut{Login: viewerLogin, ID: viewerID},
+		CreatedAt: iss.Created, UpdatedAt: iss.Updated,
+		Comments: len(iss.Comments),
 	}
 }
 

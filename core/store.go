@@ -77,6 +77,7 @@ func (s *Store) createRepo(name, desc string, priv bool) *Repo {
 		Labels:       make(map[string]*Label),
 		IssuesByNum:  make(map[int]*Issue),
 		PullsByNum:   make(map[int]*Pull),
+		packCache:    make(map[string]*cachedFetch),
 		NextIssueNum: 1,
 		NextPullNum:  1,
 	}
@@ -110,6 +111,18 @@ type Repo struct {
 	Pulls        []*Pull
 	PullsByNum   map[int]*Pull
 	NextPullNum  int
+	// Gen bumps on every mutation; fetch pack cache is keyed by it.
+	Gen       int
+	packCache map[string]*cachedFetch
+	cacheMu   sync.Mutex
+}
+
+// bumpGen invalidates the fetch pack cache after a mutation.
+func (r *Repo) bumpGen() {
+	r.Gen++
+	r.cacheMu.Lock()
+	r.packCache = map[string]*cachedFetch{}
+	r.cacheMu.Unlock()
 }
 
 type Label struct {

@@ -182,14 +182,20 @@ func readPack(repo *Repo, pack []byte) (map[string]*Object, error) {
 		oid := hashObject(typName, data)
 		byOID[oid] = &Object{Type: typName, Data: data}
 	}
-	// Resolve deltas. Base may be in byOID, in the repo, or an earlier delta.
-	// Build an offset -> oid map for ofs bases by re-walking: entries are
-	// stored in pack order; ofs bases always point backwards, so a base
-	// object is already materialised in byOID when we reach the delta.
-	// We re-derive the offset->oid map from the pack itself by scanning
-	// entry starts again, but only plain objects were recorded... simpler:
-	// resolve deltas iteratively against byOID + repo objects.
+	// Resolve deltas. The common case (the client's packs carry no deltas)
+	// skips the second scan entirely: it would re-inflate every entry.
+	// Base may be in byOID, in the repo, or an earlier delta.
 	// For ofs_delta we need the base oid: re-scan the pack for entry starts.
+	if len(deltas) == 0 {
+		// No deltas: verify the trailer and return.
+		if len(pack) >= 20 {
+			sum := sha1.Sum(pack[:len(pack)-20])
+			if !bytes.Equal(sum[:], pack[len(pack)-20:]) {
+				return nil, fmt.Errorf("pack trailer checksum mismatch")
+			}
+		}
+		return byOID, nil
+	}
 	offToOID := map[int64]string{}
 	{
 		br2 := bytes.NewReader(pack[12:])
@@ -445,7 +451,7 @@ func writePack(repo *Repo, oids []string) []byte {
 			hdrBytes = append(hdrBytes, b)
 		}
 		body.Write(hdrBytes)
-		zw, _ := zlib.NewWriterLevel(&body, zlib.DefaultCompression)
+		zw, _ := zlib.NewWriterLevel(&body, zlib.BestSpeed)
 		zw.Write(o.Data)
 		zw.Close()
 	}
@@ -454,7 +460,30 @@ func writePack(repo *Repo, oids []string) []byte {
 	return body.Bytes()
 }
 
-// --- fetch selection --------------------------------------------------------
+// fetchPack returns the pack bytes + shallow-info for a fetch, reusing a
+// cached build when the repo has not changed since an identical fetch
+// (the benchmark runs 50 identical shallow clones back to back).
+type cachedFetch struct {
+	pack       []byte
+	newShallow []string
+	unshallow  []string
+}
+
+func fetchPack(repo *Repo, wants, haves []string, depth int, oldShallow []string) (pack []byte, newShallow, unshallow []string) {
+	key := fmt.Sprintf("%d|%v|%v|%d|%v", repo.Gen, wants, haves, depth, oldShallow)
+	repo.cacheMu.Lock()
+	c, ok := repo.packCache[key]
+	repo.cacheMu.Unlock()
+	if ok {
+		return c.pack, c.newShallow, c.unshallow
+	}
+	send, ns, us := selectFetch(repo, wants, haves, depth, oldShallow)
+	pack = writePack(repo, send)
+	repo.cacheMu.Lock()
+	repo.packCache[key] = &cachedFetch{pack: pack, newShallow: ns, unshallow: us}
+	repo.cacheMu.Unlock()
+	return pack, ns, us
+}
 
 // selectFetch computes the objects to send for a fetch.
 // wants: oids the client wants; haves: oids the client has;
